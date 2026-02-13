@@ -15,10 +15,10 @@ npm i -g spc-converter
 #### Convert to WAV file
 
 ```
-spc-converter file.spc
+spc-converter file.spc file.wav
 ```
 
-Outputs file.wav
+Outputs `file.wav`.
 
 ## Use in Node.js
 

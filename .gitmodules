@@ -1,0 +1,3 @@
+[submodule "vendor/snes_spc"]
+	path = vendor/snes_spc
+	url = https://github.com/blarggs-audio-libraries/snes_spc.git

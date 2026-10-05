@@ -8,11 +8,12 @@
       "url": "https://github.com/kethinov/spc-converter/graphs/contributors"
     }
   ],
-  "version": "1.0.0",
+  "version": "2.0.0",
   "files": [
     "spc-converter.js",
-    "getSpcPlayerWasmBase64.js",
-    "loadSpcPlayer.js"
+    "loadSpcPlayer.js",
+    "spc-emulator.js",
+    "didYouMean.js"
   ],
   "homepage": "https://github.com/kethinov/spc-converter.git",
   "license": "LGPL-2.1-only",
@@ -22,18 +23,24 @@
   },
   "readmeFilename": "README.md",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "spc-tag": "1.1.0"
   },
   "devDependencies": {
     "c8": "12.0.0",
-    "mocha": "11.7.6",
     "standard": "17.1.2"
   },
   "scripts": {
-    "coverage": "c8 --reporter=text --reporter=lcov mocha test.js --test",
+    "build": "node build-wasm.js",
+    "prepack": "node build-wasm.js",
+    "pretest": "node build-wasm.js --if-missing",
+    "precoverage": "node build-wasm.js --if-missing",
+    "coverage": "c8 --reporter=text --reporter=lcov --exclude=test.js --exclude=spc-emulator.js node --test test.js",
     "lint": "standard",
     "lint-fix": "standard --fix",
-    "test": "mocha test.js"
+    "test": "node --test test.js"
   },
   "repository": {
     "type": "git",
@@ -50,5 +57,11 @@
     "SPC700",
     "SNES-SPC700"
   ],
-  "funding": "https://www.paypal.com/paypalme/newport"
+  "funding": "https://www.paypal.com/paypalme/newport",
+  "standard": {
+    "ignore": [
+      "spc-emulator.js",
+      "vendor/"
+    ]
+  }
 }

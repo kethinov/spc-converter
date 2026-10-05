@@ -132,3 +132,6 @@ dist
 .npm-cache
 *.spc
 *.wav
+
+# built by build-wasm.js, before publishing and testing
+spc-emulator.js

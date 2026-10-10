@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// usage: spc-converter file.spc file.wav [--length=seconds] [--fade=milliseconds] [--xid6-length] [--silence=seconds] [--rate=hz]
+// usage: spc-converter file.spc file.wav [--length=seconds] [--fade=milliseconds] [--xid6-length] [--silence=seconds] [--rate=hz] [--no-amplification]
 //
-// --length and --fade play the song for a length other than the one its ID666 tag says (or the default, for files without one), --xid6-length takes the length from the file's xid6 tags instead, --silence ends the song after a silence of a length other than 6 seconds (or 0 to never end it early), and --rate writes the WAV file at a sample rate other than 48000
+// --length and --fade play the song for a length other than the one its ID666 tag says (or the default, for files without one), --xid6-length takes the length from the file's xid6 tags instead, --silence ends the song after a silence of a length other than 6 seconds (or 0 to never end it early), --rate writes the WAV file at a sample rate other than 48000, and --no-amplification ignores the xid6 amplification tag
 const fs = require('fs')
 const didYouMean = require('./didYouMean')
 console.log(`spc-converter version ${require('./package.json').version}\n`)
@@ -20,7 +20,7 @@ const numberOptions = {
   silence: { key: 'silenceSeconds', example: 10 },
   rate: { key: 'sampleRate', example: 44100 }
 }
-const flagOptions = { 'xid6-length': 'xid6Length' }
+const flagOptions = { 'xid6-length': ['xid6Length', true], 'no-amplification': ['amplification', false] } // the option each sets, and to what
 const optionNames = [...Object.keys(numberOptions), ...Object.keys(flagOptions)]
 
 // sort the arguments into files and options, reporting any option that isn't one, with a suggestion if it looks like a typo of one
@@ -39,7 +39,8 @@ for (const arg of process.argv.slice(2)) {
     if (value === undefined || !/^\d+(\.\d+)?$/.test(value) || (name === 'rate' && Number(value) < 1)) fail(`--${name} needs to be a number, like --${name}=${example}`)
     options[key] = Number(value)
   } else if (flagOptions[name] && value === undefined) {
-    options[flagOptions[name]] = true
+    const [key, setting] = flagOptions[name]
+    options[key] = setting
   } else if (flagOptions[name]) {
     fail(`--${name} doesn't take a value; use just --${name}`)
   } else {

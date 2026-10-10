@@ -3,7 +3,7 @@ const assert = require('node:assert')
 const { execFileSync, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const { writeSPCID666Tags } = require('spc-tag')
-const { resample } = require('./loadSpcPlayer')
+const { resample, amplify } = require('./loadSpcPlayer')
 const didYouMean = require('./didYouMean')
 
 // runs the command line program, returning its exit code and what it printed
@@ -116,6 +116,22 @@ describe('spc-converter command line tests', () => {
     assert(spcConverter('test.spc', 'output.wav', '--xid6-length=yes').stderr.includes('--xid6-length doesn\'t take a value'))
   })
 
+  it('should play a song at the Super Nintendo\'s own level with --no-amplification, whatever its amplification tag says', () => {
+    fs.writeFileSync('test.spc', writeSPCID666Tags(makeNoiseSPCFile(0x10), { amplification: 0x20000 }))
+    try {
+      const level = (...args) => {
+        execFileSync(process.execPath, ['spc-converter.js', 'test.spc', 'output.wav', '--length=1', '--fade=0', ...args], { encoding: 'utf8' })
+        const wav = fs.readFileSync('output.wav')
+        return rms(Array.from({ length: (wav.length - 44) / 2 }, (_, i) => wav.readInt16LE(44 + i * 2) / 32768))
+      }
+      assert(Math.abs(level() / level('--no-amplification') - 2) < 0.01)
+      assert(spcConverter('test.spc', 'output.wav', '--no-amplification=yes').stderr.includes('--no-amplification doesn\'t take a value'))
+    } finally {
+      if (fs.existsSync('test.spc')) fs.unlinkSync('test.spc')
+      if (fs.existsSync('output.wav')) fs.unlinkSync('output.wav')
+    }
+  })
+
   it('should print an error for too many arguments', () => {
     const { status, stderr } = spcConverter('test.spc', 'output.wav', 'extra.wav')
     assert.strictEqual(status, 1)
@@ -182,6 +198,28 @@ describe('spc-converter library tests', { timeout: 30000 }, () => {
     assert.strictEqual(seconds(await SPCPlayer.renderToPCMBuffer(spc, { xid6Length: true, silenceSeconds: 0, sampleRate: 32000 }), 32000), 4.5)
   })
 
+  it('should play a song as loud as its amplification tag says, unless told not to', async () => {
+    const level = async (spc, options = {}) => rms(new Float32Array((await SPCPlayer.renderToPCMBuffer(spc, { lengthSeconds: 1, fadeMilliseconds: 0, sampleRate: 32000, ...options })).buffer))
+    const normal = await level(makeNoiseSPCFile(0x10))
+    assert(normal > 0.01, 'the noise SPC file makes sound')
+    assert(Math.abs(await level(writeSPCID666Tags(makeNoiseSPCFile(0x10), { amplification: 0x20000 })) / normal - 2) < 0.001) // twice the Super Nintendo's own level (65536)
+    assert(Math.abs(await level(writeSPCID666Tags(makeNoiseSPCFile(0x10), { amplification: 0x8000 })) / normal - 0.5) < 0.001) // half
+    assert.strictEqual(await level(writeSPCID666Tags(makeNoiseSPCFile(0x10), { amplification: 0x20000 }), { amplification: false }), normal)
+    assert.strictEqual(await level(writeSPCID666Tags(makeNoiseSPCFile(0x10), { amplification: 0 })), normal) // (one that makes no sense is ignored)
+  })
+
+  it('should limit the peaks of a song made louder softly, rather than clipping them', async () => {
+    const pcm = new Float32Array((await SPCPlayer.renderToPCMBuffer(writeSPCID666Tags(makeNoiseSPCFile(0x7F), { amplification: 0x80000 }), { lengthSeconds: 1, fadeMilliseconds: 0, sampleRate: 32000 })).buffer)
+    assert(pcm.every(sample => Math.abs(sample) <= 1))
+    // quiet samples are only amplified, and loud ones approach full scale smoothly, keeping their order
+    for (const [sample, amplified] of [[0.1, 0.3], [-0.2, -0.6], [0.25, 0.75]]) assert(Math.abs(amplify(Float32Array.of(sample), 3)[0] - amplified) < 1e-6)
+    const limited = Array.from(amplify(Float32Array.from([0.5, 0.55, 0.6, 0.75]), 2))
+    for (let i = 1; i < limited.length; i++) assert(limited[i] > limited[i - 1] && limited[i] < 1)
+    assert(Math.abs(limited[0] - (0.9 + 0.1 * Math.tanh(1))) < 1e-6) // (1, eased under full scale)
+    assert(amplify(Float32Array.of(2), 8)[0] <= 1) // (however loud)
+    for (const [sample, amplified] of [[0.9, 0.45], [-1, -0.5]]) assert(Math.abs(amplify(Float32Array.of(sample), 0.5)[0] - amplified) < 1e-6) // made quieter, nothing's limited
+  })
+
   it('should convert sample rates without the distortion linear interpolation adds', () => {
     // an 8 kHz tone at 32000 Hz, converted to 48000 Hz and 22050 Hz, compared to the same tone made at those rates
     const tone = (rate, frames) => Float32Array.from({ length: frames * 2 }, (_, i) => 0.5 * Math.sin(2 * Math.PI * 8000 * Math.floor(i / 2) / rate))
@@ -230,6 +268,34 @@ describe('spc-converter library tests', { timeout: 30000 }, () => {
     }
   })
 })
+
+// the root mean square level of some samples
+function rms (samples) {
+  let sum = 0
+  for (const sample of samples) sum += sample * sample
+  return Math.sqrt(sum / samples.length)
+}
+
+// an SPC file whose program plays white noise, from the sound chip's noise generator, at `volume` (0 to 127), forever: it sets the DSP's registers (by writing each one's address to $F2 and its value to $F3), then loops
+function makeNoiseSPCFile (volume) {
+  const spc = makeSampleSPCFile()
+  spc.writeUInt8(27, 0x23) // no ID666 tag, so it plays for the length given
+  spc.writeUInt16LE(0x0400, 0x25) // where the program starts
+  spc.writeUInt8(0xEF, 0x2B) // the stack pointer
+  const registers = [
+    [0x6C, 0x3F], // FLG: unmuted, echo writes off, the fastest noise
+    [0x00, volume], [0x01, volume], // voice 0's left and right volume
+    [0x05, 0x00], [0x07, 0x7F], // its envelope: a fixed gain, at full
+    [0x0C, 0x7F], [0x1C, 0x7F], // the main volume
+    [0x3D, 0x01], // voice 0 plays noise
+    [0x5D, 0x02], [0x04, 0x00], // where its (unused) samples are
+    [0x4C, 0x01] // key on voice 0
+  ]
+  const program = registers.flatMap(([register, value]) => [0x8F, register, 0xF2, 0x8F, value, 0xF3]) // mov $F2, #register; mov $F3, #value
+  program.push(0x2F, 0xFE) // bra (to itself)
+  Buffer.from(program).copy(spc, 0x100 + 0x0400) // (the SPC700's RAM starts at 0x100 in the file)
+  return spc
+}
 
 function makeSampleSPCFile () {
   // create a buffer for the spc file (66048 bytes)

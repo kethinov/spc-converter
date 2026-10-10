@@ -1,5 +1,7 @@
 // converts SPC files to PCM audio or WAV files, by playing them with blargg's snes_spc emulator, built from its source with its cycle accurate DSP emulator (see build-wasm.js)
 //
+// a song is played as loud as its xid6 tags' amplification says, if they say (65536 is the Super Nintendo's own level), as SNESAmp, which the tag is from, does; one made louder can go past full scale, so its peaks are softly limited rather than clipped
+//
 // a song plays for as long as its ID666 tag says (read with spc-tag, in either of the tag's formats), then fades out for as long as the tag says; songs whose tag doesn't say play for 2.5 minutes and fade out over 8 seconds, as game-music-emu (and so players built on it, like https://chiptune.app) does. A song that goes silent for 6 seconds ends there, also as game-music-emu does, so songs that end sooner than their length don't trail off into silence
 
 const fs = require('fs')
@@ -16,7 +18,10 @@ const XID6_TICKS_PER_SECOND = 64000 // xid6 lengths are in ticks of 1/64000th of
 const SPC_SIGNATURE = 'SNES-SPC700 Sound File Data'
 const SPC_MIN_SIZE = 0x10180 // the header, 64KB of RAM, and the DSP registers; the rest of a full file (unused space and extra RAM) is optional
 const FRAMES_PER_CHUNK = NATIVE_SAMPLE_RATE * 5 // how much is played between yields to the event loop, so converting doesn't block it for long
-const OPTION_NAMES = ['lengthSeconds', 'fadeMilliseconds', 'xid6Length', 'silenceSeconds', 'sampleRate']
+const NORMAL_AMPLIFICATION = 65536 // the amplification tag's value for the Super Nintendo's own level
+const MAX_AMPLIFICATION = 16 // amplification tags further than this from normal (24 dB, either way) are taken to be corrupt, and ignored
+const LIMIT_THRESHOLD = 0.9 // samples louder than this (out of 1) are limited, when a song's been made louder, so they approach full scale rather than going past it
+const OPTION_NAMES = ['lengthSeconds', 'fadeMilliseconds', 'xid6Length', 'silenceSeconds', 'sampleRate', 'amplification']
 
 module.exports = async () => {
   const emulator = await require('./spc-emulator')()
@@ -36,6 +41,14 @@ module.exports = async () => {
       lengthSeconds: options.lengthSeconds ?? tagged.lengthSeconds ?? DEFAULT_LENGTH_SECONDS,
       fadeMilliseconds: options.fadeMilliseconds ?? tagged.fadeMilliseconds ?? DEFAULT_FADE_MILLISECONDS
     }
+  }
+
+  // how much louder (or quieter) to play the song than the Super Nintendo did, from its xid6 amplification tag: 1 if it hasn't got one (or one that makes sense), or options.amplification is false
+  function amplificationOf (spc, options) {
+    if (options.amplification === false) return 1
+    const { amplification } = readSPCID666Tags(Buffer.from(spc.buffer, spc.byteOffset, spc.byteLength))
+    const gain = amplification / NORMAL_AMPLIFICATION
+    return gain >= 1 / MAX_AMPLIFICATION && gain <= MAX_AMPLIFICATION ? gain : 1
   }
 
   // plays the song for up to `totalFrames` at the emulator's own rate, as interleaved stereo 16 bit samples, stopping early once it's been silent for `silenceFrames` (if that's not 0); returns the samples played
@@ -92,13 +105,13 @@ module.exports = async () => {
       native[frame * 2 + 1] = samples[frame * 2 + 1] / 32768 * gain
     }
 
-    return { pcm: resample(native, NATIVE_SAMPLE_RATE, sampleRate), sampleRate }
+    return { pcm: amplify(resample(native, NATIVE_SAMPLE_RATE, sampleRate), amplificationOf(spc, options)), sampleRate }
   }
 
   return {
     // renders an SPC file (a path, or its bytes) to pcm: interleaved stereo 32 bit floats, as the bytes of a Uint8Array
     //
-    // options: { lengthSeconds, fadeMilliseconds, xid6Length, silenceSeconds, sampleRate }: to play the song for a length other than the one its tags say, to take its length from its xid6 tags, to end it after a silence of another length (or 0 to never end it early), and to convert it to a sample rate other than 48000 (32000 is the emulator's own, which needs no resampling)
+    // options: { lengthSeconds, fadeMilliseconds, xid6Length, silenceSeconds, sampleRate, amplification }: to play the song for a length other than the one its tags say, to take its length from its xid6 tags, to end it after a silence of another length (or 0 to never end it early), to convert it to a sample rate other than 48000 (32000 is the emulator's own, which needs no resampling), and (amplification: false) to play it at the Super Nintendo's own level, whatever its amplification tag says
     renderToPCMBuffer: async function (filePathOrArrayBuffer, options) {
       const { pcm } = await render(filePathOrArrayBuffer, options)
       return new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
@@ -186,6 +199,20 @@ function resample (input, fromRate, toRate) {
 }
 
 module.exports.resample = resample // for the tests
+
+// makes pcm louder or quieter by `gain` (in place), limiting peaks that would go past full scale when it's louder: samples up to LIMIT_THRESHOLD are only amplified, and louder ones are eased towards full scale (with a tanh curve, which meets the threshold smoothly), which sounds far less harsh than clipping them; returns the pcm
+function amplify (pcm, gain) {
+  if (gain === 1) return pcm
+  const headroom = 1 - LIMIT_THRESHOLD
+  for (let i = 0; i < pcm.length; i++) {
+    const sample = pcm[i] * gain
+    const level = Math.abs(sample)
+    pcm[i] = gain > 1 && level > LIMIT_THRESHOLD ? Math.sign(sample) * (LIMIT_THRESHOLD + headroom * Math.tanh((level - LIMIT_THRESHOLD) / headroom)) : sample
+  }
+  return pcm
+}
+
+module.exports.amplify = amplify // for the tests
 
 function encodeWAV (samples, sampleRate, numChannels) {
   const buffer = new ArrayBuffer(44 + samples.length * 2)

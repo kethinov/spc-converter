@@ -31,6 +31,7 @@ spc-converter file.spc file.wav --length=120 --fade=5000 --rate=44100
 - `--xid6-length`: Take the song's length from its xid6 tags instead of its ID666 tag, if it has them. They're more exact, but are wrong in many files.
 - `--silence`: How many seconds of silence end the song early. Defaults to 6. Use 0 to always play the whole length.
 - `--rate`: The WAV file's sample rate. Defaults to 48000. The Super Nintendo's own is 32000, which needs no resampling.
+- `--no-amplification`: Ignoring the amplification in xid6 tags.
 
 An option that isn't one of these (like `--lenght=10`) is an error, which suggests the option you may have meant.
 
@@ -83,6 +84,7 @@ Both functions take a file path or the file's bytes, and an optional object of o
 - `xid6Length`: `true` to take the song's length from its xid6 tags instead of its ID666 tag, if it has them. They're more exact (an intro, a loop played a number of times, and an end, to 1/64000th of a second), but are wrong in many files, which is why game-music-emu ignores them.
 - `silenceSeconds`: How many seconds of silence end the song early. Defaults to 6. Use 0 to always play the whole length.
 - `sampleRate`: The sample rate to convert to. Defaults to 48000. The Super Nintendo's own is 32000, which needs no resampling. Converting to other rates uses a windowed sinc filter, which doesn't add the distortion simpler resampling does.
+- `amplification`: `false` ignore the amplification in its xid6 tags.
 
 ```javascript
 const pcmBuffer = await SPCPlayer.renderToPCMBuffer(file, { lengthSeconds: 120, fadeMilliseconds: 5000, sampleRate: 32000 })

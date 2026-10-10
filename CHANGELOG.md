@@ -1,3 +1,8 @@
+## 2.1.0
+
+- Added support for the amplification in xid6 tags. Use the new `amplification: false` option or `--no-amplification` flag to play songs at the Super Nintendo's level instead.
+- Updated dependencies.
+
 ## 2.0.0
 
 - Breaking: requires Node.js 22 or newer (Node.js 20 reached its end of life in April 2026), as spc-tag 1.1.0 does.

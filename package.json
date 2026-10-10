@@ -8,7 +8,7 @@
       "url": "https://github.com/kethinov/spc-converter/graphs/contributors"
     }
   ],
-  "version": "2.0.0",
+  "version": "2.1.0",
   "files": [
     "spc-converter.js",
     "loadSpcPlayer.js",
